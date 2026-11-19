@@ -28,8 +28,9 @@
 
   .breath { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; pointer-events: none; }
   .breath.on { display: flex; }
-  .breath .ring { width: min(60vmin, 360px); height: min(60vmin, 360px); border-radius: 50%; border: 2px solid rgba(255,255,255,.55); background: radial-gradient(circle, rgba(255,255,255,.18), rgba(255,255,255,0) 70%); animation: breathe 10s ease-in-out infinite; display: flex; align-items: center; justify-content: center; }
-  .breath .label { font-size: 26px; letter-spacing: .4em; padding-left: .4em; text-shadow: 0 2px 10px rgba(0,0,0,.3); }
+  .breath .ring { position: relative; width: min(60vmin, 360px); height: min(60vmin, 360px); animation: breathe 10s ease-in-out infinite; display: flex; align-items: center; justify-content: center; }
+  .breath .ring svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .breath .label { position: relative; font-size: 26px; letter-spacing: .4em; padding-left: .4em; text-shadow: 0 2px 10px rgba(0,0,0,.3); }
   @keyframes breathe { 0% { transform: scale(.55); } 40% { transform: scale(1); } 100% { transform: scale(.55); } }
 
   @media (prefers-reduced-motion: reduce) { .breath .ring { animation-duration: 16s; } }
@@ -44,7 +45,13 @@
 </div>
 
 <div class="breath" id="breath" aria-hidden="true">
-  <div class="ring"><div class="label" id="breathLabel">吸氣</div></div>
+  <div class="ring">
+    <svg viewBox="0 0 100 100" aria-hidden="true">
+      <defs><radialGradient id="ringFill"><stop offset="0" stop-color="#fff" stop-opacity=".18"/><stop offset=".7" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>
+      <polygon points="50,1 92.4,25.5 92.4,74.5 50,99 7.6,74.5 7.6,25.5" fill="url(#ringFill)" stroke="rgba(255,255,255,.55)" stroke-width="0.6" stroke-linejoin="round"/>
+    </svg>
+    <div class="label" id="breathLabel">吸氣</div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -149,7 +156,30 @@
       freq: rand(0.4, 1.1),
       phase: rand(0, Math.PI * 2),
       hue: rand(th.hue[0], th.hue[1]),
+      rot: rand(0, Math.PI / 3),
+      spin: reduceMotion ? 0 : rand(-0.25, 0.25), // 緩慢自轉（弧度／秒）
     });
+  }
+
+  // ---------- 六角形工具 ----------
+  // 以 (x, y) 為中心、外接圓半徑 r、旋轉 rot 的正六角形路徑
+  function hexPath(x, y, r, rot) {
+    ctx.beginPath();
+    for (let k = 0; k < 6; k++) {
+      const a = rot + k * Math.PI / 3;
+      const px = x + Math.cos(a) * r, py = y + Math.sin(a) * r;
+      k ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.closePath();
+  }
+
+  // 點 (px, py) 是否落在六角形內（pad 為額外容錯）
+  function inHex(px, py, b, pad) {
+    const dx = px - b.x, dy = py - b.y;
+    const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
+    const lx = Math.abs(dx * c - dy * s), ly = Math.abs(dx * s + dy * c);
+    const R = b.r + pad, h = R * Math.sqrt(3) / 2;
+    return ly <= h && Math.sqrt(3) * lx + ly <= Math.sqrt(3) * R;
   }
 
   function targetCount() { return Math.max(12, Math.min(30, Math.round(W * H / 30000))); }
@@ -163,7 +193,7 @@
       const sp = rand(40, 130);
       particles.push({ x: b.x, y: b.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1, size: rand(1.5, 4), hue: b.hue });
     }
-    rings.push({ x: b.x, y: b.y, r: b.r, max: b.r * 1.9, life: 1, hue: b.hue });
+    rings.push({ x: b.x, y: b.y, r: b.r, max: b.r * 1.9, life: 1, hue: b.hue, rot: b.rot });
     playPop(b.r);
     session++; total++;
     updateCount();
@@ -174,22 +204,21 @@
   function popAt(x, y) {
     for (let i = bubbles.length - 1; i >= 0; i--) {
       const b = bubbles[i];
-      const dx = x - b.x, dy = y - b.y;
-      if (dx * dx + dy * dy <= (b.r + 4) * (b.r + 4)) { pop(b, i); return true; }
+      if (inHex(x, y, b, 4)) { pop(b, i); return true; }
     }
     return false;
   }
 
   // ---------- 繪製 ----------
   function drawBubble(b) {
-    const { x, y, r, hue } = b;
+    const { x, y, r, hue, rot } = b;
     const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.35, r * 0.1, x, y, r);
     g.addColorStop(0, `hsla(${hue}, 90%, 92%, .30)`);
     g.addColorStop(0.7, `hsla(${hue}, 85%, 75%, .16)`);
     g.addColorStop(1, `hsla(${hue}, 90%, 85%, .42)`);
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+    hexPath(x, y, r, rot);
     ctx.fillStyle = g; ctx.fill();
-    ctx.lineWidth = 1.5; ctx.strokeStyle = `hsla(${hue}, 100%, 95%, .55)`; ctx.stroke();
+    ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.strokeStyle = `hsla(${hue}, 100%, 95%, .55)`; ctx.stroke();
     // 高光
     ctx.beginPath();
     ctx.ellipse(x - r * 0.38, y - r * 0.42, r * 0.2, r * 0.11, -0.6, 0, Math.PI * 2);
@@ -208,6 +237,7 @@
       const b = bubbles[i];
       b.y += b.vy * dt;
       b.x = b.baseX + Math.sin(time * b.freq + b.phase) * b.amp;
+      b.rot += b.spin * dt;
       if (b.y < -b.r * 2) { bubbles.splice(i, 1); continue; } // 飄走了，沒關係
       drawBubble(b);
     }
@@ -217,7 +247,7 @@
       o.life -= dt * 1.8;
       if (o.life <= 0) { rings.splice(i, 1); continue; }
       const rr = o.r + (o.max - o.r) * (1 - o.life);
-      ctx.beginPath(); ctx.arc(o.x, o.y, rr, 0, Math.PI * 2);
+      hexPath(o.x, o.y, rr, o.rot || 0);
       ctx.lineWidth = 2; ctx.strokeStyle = `hsla(${o.hue}, 100%, 95%, ${o.life * 0.6})`; ctx.stroke();
     }
 
@@ -242,7 +272,7 @@
     down = true;
     if (!popAt(e.clientX, e.clientY)) {
       // 點空白處也有輕輕的漣漪
-      rings.push({ x: e.clientX, y: e.clientY, r: 4, max: 36, life: 1, hue: rand(...THEMES[themeIdx].hue) });
+      rings.push({ x: e.clientX, y: e.clientY, r: 4, max: 36, life: 1, hue: rand(...THEMES[themeIdx].hue), rot: rand(0, Math.PI / 3) });
     }
     hideHint();
   });
